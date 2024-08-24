@@ -13,7 +13,7 @@ WORKDIR /forwardproxy
 
 COPY ./ ./
 
-RUN xcaddy build --with github.com/caddyserver/forwardproxy@master=/forwardproxy
+RUN xcaddy build --with github.com/caddyserver/forwardproxy@caddy2=/forwardproxy
 
 # multi-stage builds to create the final image
 FROM alpine AS dist
@@ -39,4 +39,4 @@ EXPOSE 80/tcp 443/tcp 443/udp
 
 ENTRYPOINT ["caddy"]
 
-CMD [ "run" ]
+CMD [ "run --environ --config /etc/caddy/Caddyfile" ]
