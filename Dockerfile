@@ -39,4 +39,4 @@ EXPOSE 80/tcp 443/tcp 443/udp
 
 ENTRYPOINT ["caddy"]
 
-CMD [ "run --environ --config /etc/caddy/Caddyfile" ]
+CMD [ "run" "--environ" "--config" "/etc/caddy/Caddyfile" ]
