@@ -148,7 +148,7 @@ func (h *Handler) Provision(ctx caddy.Context) error {
 	h.aclRules = append(h.aclRules, &aclAllRule{allow: true})
 
 	if h.ProbeResistance != nil {
-		if h.AuthCredentials == nil || h.V2boardApiProvider == nil {
+		if h.AuthCredentials == nil && h.V2boardApiProvider == nil {
 			return fmt.Errorf("probe resistance requires authentication")
 		}
 		if len(h.ProbeResistance.Domain) > 0 {
@@ -320,13 +320,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
 		}
 		defer targetConn.Close()
 
+		userID, _ := r.Context().Value(caddy.ReplacerCtxKey).(*caddy.Replacer).GetString("http.auth.user.id")
+		wrappedTargetConn := &trafficLoggingConn{Conn: targetConn, userID: userID, v2boardApiProvider: h.V2boardApiProvider}
+
 		switch r.ProtoMajor {
 		case 1: // http1: hijack the whole flow
-			return serveHijack(w, targetConn)
+			return serveHijack(w, wrappedTargetConn)
 		case 2: // http2: keep reading from "request" and writing into same response
 			fallthrough
 		case 3:
-			return dualStream(targetConn, r.Body, w, r.Header.Get("Padding") != "")
+			return dualStream(wrappedTargetConn, r.Body, w, r.Header.Get("Padding") != "")
 		}
 
 		panic("There was a check for http version, yet it's incorrect")
@@ -393,12 +396,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
 			return caddyhttp.Error(http.StatusBadGateway,
 				fmt.Errorf("failed to dial upstream: %v", err))
 		}
-		err = r.Write(upsConn)
+
+		userID, _ := r.Context().Value(caddy.ReplacerCtxKey).(*caddy.Replacer).GetString("http.auth.user.id")
+		wrappedUpsConn := &trafficLoggingConn{Conn: upsConn, userID: userID, v2boardApiProvider: h.V2boardApiProvider}
+
+		err = r.Write(wrappedUpsConn)
 		if err != nil {
 			return caddyhttp.Error(http.StatusBadGateway,
 				fmt.Errorf("failed to write upstream request: %v", err))
 		}
-		response, err = http.ReadResponse(bufio.NewReader(upsConn), r)
+		response, err = http.ReadResponse(bufio.NewReader(wrappedUpsConn), r)
 		if err != nil {
 			return caddyhttp.Error(http.StatusBadGateway,
 				fmt.Errorf("failed to read upstream response: %v", err))
@@ -420,7 +427,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
 			fmt.Errorf("failed to read response: %v", err))
 	}
 
-	return forwardResponse(w, response)
+	userID, _ := r.Context().Value(caddy.ReplacerCtxKey).(*caddy.Replacer).GetString("http.auth.user.id")
+	wrappedResponseWriter := &trafficLoggingResponseWriter{ResponseWriter: w, userID: userID, v2boardApiProvider: h.V2boardApiProvider}
+
+	return forwardResponse(wrappedResponseWriter, response)
 }
 
 func (h *Handler) checkCredentials(r *http.Request) error {
@@ -822,6 +832,43 @@ var bufferPool = sync.Pool{
 		buffer := make([]byte, 0, 64*1024)
 		return &buffer
 	},
+}
+
+// trafficLoggingConn wraps a net.Conn and logs traffic
+type trafficLoggingConn struct {
+	net.Conn
+	userID             string
+	v2boardApiProvider *V2boardApiProvider
+}
+
+func (c *trafficLoggingConn) Read(b []byte) (n int, err error) {
+	if c.v2boardApiProvider != nil && !c.v2boardApiProvider.LogTraffic(c.userID, 0, uint64(len(b))) {
+		return 0, errors.New("traffic logging failed")
+	}
+	n, err = c.Conn.Read(b)
+	return
+}
+
+func (c *trafficLoggingConn) Write(b []byte) (n int, err error) {
+	if c.v2boardApiProvider != nil && !c.v2boardApiProvider.LogTraffic(c.userID, uint64(len(b)), 0) {
+		return 0, errors.New("traffic logging failed")
+	}
+	n, err = c.Conn.Write(b)
+	return
+}
+
+// trafficLoggingResponseWriter wraps a http.ResponseWriter and logs traffic
+type trafficLoggingResponseWriter struct {
+	http.ResponseWriter
+	userID             string
+	v2boardApiProvider *V2boardApiProvider
+}
+
+func (w *trafficLoggingResponseWriter) Write(b []byte) (n int, err error) {
+	if w.v2boardApiProvider != nil && !w.v2boardApiProvider.LogTraffic(w.userID, uint64(len(b)), 0) {
+		return 0, errors.New("traffic logging failed")
+	}
+	return w.ResponseWriter.Write(b)
 }
 
 ////// used during provision only
