@@ -95,7 +95,9 @@ type Handler struct {
 	// TODO: temporary/deprecated - we should try to reuse existing authentication modules instead!
 	AuthCredentials [][]byte `json:"auth_credentials,omitempty"` // slice with base64-encoded credentials
 
-	V2boardApiProvider *V2boardApiProvider `json:"-"`
+	V2b *V2bConfig `json:"v2b,omitempty"`
+
+	v2boardApiProvider *V2boardApiProvider `json:"-"`
 }
 
 // CaddyModule returns the Caddy module information.
@@ -148,7 +150,7 @@ func (h *Handler) Provision(ctx caddy.Context) error {
 	h.aclRules = append(h.aclRules, &aclAllRule{allow: true})
 
 	if h.ProbeResistance != nil {
-		if h.AuthCredentials == nil && h.V2boardApiProvider == nil {
+		if h.AuthCredentials == nil && h.v2boardApiProvider == nil {
 			return fmt.Errorf("probe resistance requires authentication")
 		}
 		if len(h.ProbeResistance.Domain) > 0 {
@@ -219,8 +221,11 @@ func (h *Handler) Provision(ctx caddy.Context) error {
 		}
 	}
 
-	go h.V2boardApiProvider.PushTrafficToV2boardInterval(60 * time.Second)
-	go h.V2boardApiProvider.UpdateUsers(60 * time.Second)
+	if h.V2b != nil {
+		h.v2boardApiProvider = NewV2boardApiProvider(h.logger, *h.V2b)
+		go h.v2boardApiProvider.PushTrafficToV2boardInterval(60 * time.Second)
+		go h.v2boardApiProvider.UpdateUsers(60 * time.Second)
+	}
 
 	return nil
 }
@@ -233,7 +238,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
 	}
 
 	var authErr error
-	if h.AuthCredentials != nil || h.V2boardApiProvider != nil {
+	if h.AuthCredentials != nil || h.v2boardApiProvider != nil {
 		authErr = h.checkCredentials(r)
 	}
 	if h.ProbeResistance != nil && len(h.ProbeResistance.Domain) > 0 && reqHost == h.ProbeResistance.Domain {
@@ -324,7 +329,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
 		defer targetConn.Close()
 
 		userID, _ := r.Context().Value(caddy.ReplacerCtxKey).(*caddy.Replacer).GetString("http.auth.user.id")
-		wrappedTargetConn := &trafficLoggingConn{Conn: targetConn, userID: userID, v2boardApiProvider: h.V2boardApiProvider}
+		wrappedTargetConn := &trafficLoggingConn{Conn: targetConn, userID: userID, v2boardApiProvider: h.v2boardApiProvider}
 
 		switch r.ProtoMajor {
 		case 1: // http1: hijack the whole flow
@@ -401,7 +406,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
 		}
 
 		userID, _ := r.Context().Value(caddy.ReplacerCtxKey).(*caddy.Replacer).GetString("http.auth.user.id")
-		wrappedUpsConn := &trafficLoggingConn{Conn: upsConn, userID: userID, v2boardApiProvider: h.V2boardApiProvider}
+		wrappedUpsConn := &trafficLoggingConn{Conn: upsConn, userID: userID, v2boardApiProvider: h.v2boardApiProvider}
 
 		err = r.Write(wrappedUpsConn)
 		if err != nil {
@@ -431,7 +436,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
 	}
 
 	userID, _ := r.Context().Value(caddy.ReplacerCtxKey).(*caddy.Replacer).GetString("http.auth.user.id")
-	wrappedResponseWriter := &trafficLoggingResponseWriter{ResponseWriter: w, userID: userID, v2boardApiProvider: h.V2boardApiProvider}
+	wrappedResponseWriter := &trafficLoggingResponseWriter{ResponseWriter: w, userID: userID, v2boardApiProvider: h.v2boardApiProvider}
 
 	return forwardResponse(wrappedResponseWriter, response)
 }
@@ -444,8 +449,8 @@ func (h *Handler) checkCredentials(r *http.Request) error {
 	if strings.ToLower(pa[0]) != "basic" {
 		return errors.New("auth type is not supported")
 	}
-	if h.V2boardApiProvider != nil {
-		if ok, id := h.V2boardApiProvider.Authenticate(pa[1]); ok {
+	if h.v2boardApiProvider != nil {
+		if ok, id := h.v2boardApiProvider.Authenticate(pa[1]); ok {
 			repl := r.Context().Value(caddy.ReplacerCtxKey).(*caddy.Replacer)
 			repl.Set("http.auth.user.id", id)
 			return nil

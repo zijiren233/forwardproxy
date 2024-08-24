@@ -51,7 +51,7 @@ func (h *Handler) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 			if err != nil {
 				return d.Errf("invalid nodeid: %s", args[3])
 			}
-			h.V2boardApiProvider = NewV2boardApiProvider(h.logger, args[0], args[1], args[2], uint(nodeid))
+			h.V2b = &V2bConfig{ApiHost: args[0], ApiKey: args[1], NodeType: args[2], NodeID: uint(nodeid)}
 		case "basic_auth":
 			if len(args) != 2 {
 				return d.ArgErr()
