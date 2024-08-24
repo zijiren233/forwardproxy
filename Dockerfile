@@ -35,4 +35,8 @@ COPY --from=builder /forwardproxy/caddy /usr/local/bin/caddy
 # Caddyfile
 VOLUME [ "/etc/caddy" ]
 
+EXPOSE 80/tcp 443/tcp 443/udp
+
 ENTRYPOINT ["caddy"]
+
+CMD [ "run" ]
