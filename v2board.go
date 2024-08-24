@@ -21,21 +21,22 @@ type trafficStatsEntry struct {
 }
 
 type V2boardApiProvider struct {
-	client          *http.Client
-	logger          *zap.Logger
-	apiHost, apiKey string
-	nodeID          uint
-	statsMap        map[string]*trafficStatsEntry // id -> stats
-	authsMap        map[string]string             // auth -> id
-	lock            sync.RWMutex
+	client                    *http.Client
+	logger                    *zap.Logger
+	apiHost, apiKey, nodeType string
+	nodeID                    uint
+	statsMap                  map[string]*trafficStatsEntry // id -> stats
+	authsMap                  map[string]string             // auth -> id
+	lock                      sync.RWMutex
 }
 
-func NewV2boardApiProvider(logger *zap.Logger, apiHost, apiKey string, nodeID uint) *V2boardApiProvider {
+func NewV2boardApiProvider(logger *zap.Logger, apiHost, apiKey, nodeType string, nodeID uint) *V2boardApiProvider {
 	return &V2boardApiProvider{
 		client:   &http.Client{},
 		logger:   logger,
 		apiHost:  apiHost,
 		apiKey:   apiKey,
+		nodeType: nodeType,
 		nodeID:   nodeID,
 		statsMap: make(map[string]*trafficStatsEntry),
 		authsMap: make(map[string]string),
@@ -62,7 +63,7 @@ func (v *V2boardApiProvider) getUserList(ctx context.Context, timeout time.Durat
 	q := req.URL.Query()
 	q.Add("token", v.apiKey)
 	q.Add("node_id", strconv.Itoa(int(v.nodeID)))
-	q.Add("node_type", "hysteria")
+	q.Add("node_type", v.nodeType)
 	req.URL.RawQuery = q.Encode()
 
 	resp, err := v.client.Do(req)
@@ -149,10 +150,11 @@ func (v *V2boardApiProvider) PushTrafficToV2boardInterval(interval time.Duration
 	for range ticker.C {
 		if err := v.pushTrafficToV2board(
 			fmt.Sprintf(
-				"%s?token=%s&node_id=%d&node_type=hysteria",
+				"%s?token=%s&node_id=%d&node_type=%s",
 				v.apiHost+"/api/v1/server/UniProxy/push",
 				v.apiKey,
 				v.nodeID,
+				v.nodeType,
 			),
 		); err != nil {
 			v.logger.Error("提交用户流量情况失败", zap.Error(err))

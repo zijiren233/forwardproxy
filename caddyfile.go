@@ -43,6 +43,15 @@ func (h *Handler) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 		subdirective := d.Val()
 		args := d.RemainingArgs()
 		switch subdirective {
+		case "v2b":
+			if len(args) != 4 {
+				return d.ArgErr()
+			}
+			nodeid, err := strconv.Atoi(args[3])
+			if err != nil {
+				return d.Errf("invalid nodeid: %s", args[3])
+			}
+			h.V2boardApiProvider = NewV2boardApiProvider(h.logger, args[0], args[1], args[2], uint(nodeid))
 		case "basic_auth":
 			if len(args) != 2 {
 				return d.ArgErr()

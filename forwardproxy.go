@@ -219,6 +219,9 @@ func (h *Handler) Provision(ctx caddy.Context) error {
 		}
 	}
 
+	go h.V2boardApiProvider.PushTrafficToV2boardInterval(60 * time.Second)
+	go h.V2boardApiProvider.UpdateUsers(60 * time.Second)
+
 	return nil
 }
 
