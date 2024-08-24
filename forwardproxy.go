@@ -112,6 +112,12 @@ func (Handler) CaddyModule() caddy.ModuleInfo {
 func (h *Handler) Provision(ctx caddy.Context) error {
 	h.logger = ctx.Logger(h)
 
+	if h.V2b != nil {
+		h.v2boardApiProvider = NewV2boardApiProvider(h.logger, *h.V2b)
+		go h.v2boardApiProvider.PushTrafficToV2boardInterval(60 * time.Second)
+		go h.v2boardApiProvider.UpdateUsers(60 * time.Second)
+	}
+
 	if h.DialTimeout <= 0 {
 		h.DialTimeout = caddy.Duration(30 * time.Second)
 	}
@@ -219,12 +225,6 @@ func (h *Handler) Provision(ctx caddy.Context) error {
 				return upstreamDialer.Dial(network, address)
 			}
 		}
-	}
-
-	if h.V2b != nil {
-		h.v2boardApiProvider = NewV2boardApiProvider(h.logger, *h.V2b)
-		go h.v2boardApiProvider.PushTrafficToV2boardInterval(60 * time.Second)
-		go h.v2boardApiProvider.UpdateUsers(60 * time.Second)
 	}
 
 	return nil
