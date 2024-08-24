@@ -94,6 +94,8 @@ type Handler struct {
 
 	// TODO: temporary/deprecated - we should try to reuse existing authentication modules instead!
 	AuthCredentials [][]byte `json:"auth_credentials,omitempty"` // slice with base64-encoded credentials
+
+	V2boardApiProvider *V2boardApiProvider `json:"-"`
 }
 
 // CaddyModule returns the Caddy module information.
@@ -146,7 +148,7 @@ func (h *Handler) Provision(ctx caddy.Context) error {
 	h.aclRules = append(h.aclRules, &aclAllRule{allow: true})
 
 	if h.ProbeResistance != nil {
-		if h.AuthCredentials == nil {
+		if h.AuthCredentials == nil || h.V2boardApiProvider == nil {
 			return fmt.Errorf("probe resistance requires authentication")
 		}
 		if len(h.ProbeResistance.Domain) > 0 {
@@ -228,7 +230,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
 	}
 
 	var authErr error
-	if h.AuthCredentials != nil {
+	if h.AuthCredentials != nil || h.V2boardApiProvider != nil {
 		authErr = h.checkCredentials(r)
 	}
 	if h.ProbeResistance != nil && len(h.ProbeResistance.Domain) > 0 && reqHost == h.ProbeResistance.Domain {
@@ -421,7 +423,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
 	return forwardResponse(w, response)
 }
 
-func (h Handler) checkCredentials(r *http.Request) error {
+func (h *Handler) checkCredentials(r *http.Request) error {
 	pa := strings.Split(r.Header.Get("Proxy-Authorization"), " ")
 	if len(pa) != 2 {
 		return errors.New("Proxy-Authorization is required! Expected format: <type> <credentials>")
@@ -429,17 +431,25 @@ func (h Handler) checkCredentials(r *http.Request) error {
 	if strings.ToLower(pa[0]) != "basic" {
 		return errors.New("auth type is not supported")
 	}
-	for _, creds := range h.AuthCredentials {
-		if subtle.ConstantTimeCompare(creds, []byte(pa[1])) == 1 {
+	if h.V2boardApiProvider != nil {
+		if ok, id := h.V2boardApiProvider.Authenticate(pa[1]); ok {
 			repl := r.Context().Value(caddy.ReplacerCtxKey).(*caddy.Replacer)
-			buf := make([]byte, base64.StdEncoding.DecodedLen(len(creds)))
-			_, _ = base64.StdEncoding.Decode(buf, creds) // should not err ever since we are decoding a known good input
-			cred := string(buf)
-			repl.Set("http.auth.user.id", cred[:strings.IndexByte(cred, ':')])
-			// Please do not consider this to be timing-attack-safe code. Simple equality is almost
-			// mindlessly substituted with constant time algo and there ARE known issues with this code,
-			// e.g. size of smallest credentials is guessable. TODO: protect from all the attacks! Hash?
+			repl.Set("http.auth.user.id", id)
 			return nil
+		}
+	} else {
+		for _, creds := range h.AuthCredentials {
+			if subtle.ConstantTimeCompare(creds, []byte(pa[1])) == 1 {
+				repl := r.Context().Value(caddy.ReplacerCtxKey).(*caddy.Replacer)
+				buf := make([]byte, base64.StdEncoding.DecodedLen(len(creds)))
+				_, _ = base64.StdEncoding.Decode(buf, creds) // should not err ever since we are decoding a known good input
+				cred := string(buf)
+				repl.Set("http.auth.user.id", cred[:strings.IndexByte(cred, ':')])
+				// Please do not consider this to be timing-attack-safe code. Simple equality is almost
+				// mindlessly substituted with constant time algo and there ARE known issues with this code,
+				// e.g. size of smallest credentials is guessable. TODO: protect from all the attacks! Hash?
+				return nil
+			}
 		}
 	}
 	repl := r.Context().Value(caddy.ReplacerCtxKey).(*caddy.Replacer)
